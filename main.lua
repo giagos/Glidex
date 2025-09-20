@@ -3,6 +3,8 @@ local config = require("codee.config")
 local Body = require("codee.maing_body")
 local BodyHandler = require("codee.body_handler")
 local UI = require("codee.ui")
+local VCalc = require("codee.vector_calc")
+local VDraw = require("codee.vector_draw")
 
 local message = "Welcome to Daedalus Dream Works Glidex"
 
@@ -51,6 +53,30 @@ function love.draw()
     if body then body:draw() end
 
     if handler then handler:draw() end
+
+    -- Resultant gravity vector in green at the overall center of mass
+    if body and handler then
+        local rx, ry, rvx, rvy, total_m, _ = VCalc.resultantGravityVector(body, handler.points)
+        if rx and rvx then
+            love.graphics.setColor(0, 1, 0, 1) -- green
+            VDraw.arrowWithLabel(rx, ry, rvx, rvy, string.format("%.0f g total", total_m), {0,1,0,1}, 0)
+        end
+    end
+
+    -- Bottom-left CG readout (in cm from the nose)
+    do
+        local w, h = love.graphics.getDimensions()
+        love.graphics.setColor(1, 1, 1, 1)
+        local text = "CG: N/A"
+        if body then
+            local pts = (handler and handler.points) or {}
+            local com_left_cm, total_m = VCalc.centerOfMassFromLeft(body, pts)
+            if (total_m or 0) > 0 then
+                text = string.format("CG: %.1f cm from nose (left)", com_left_cm)
+            end
+        end
+        love.graphics.print(text, 16, h - 24)
+    end
     if ui then ui:draw() end
 end
 

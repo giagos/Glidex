@@ -6,6 +6,7 @@
 local BodyHandler = {}
 BodyHandler.__index = BodyHandler
 local VDraw = require("codee.vector_draw")
+local VCalc = require("codee.vector_calc")
 
 -- Icon scaling
 local BASE_RADIUS = 6
@@ -85,35 +86,8 @@ end
 function BodyHandler:draw()
     local body = self.body
     if not body then return end
-    -- Adaptive vector scale: make the largest on-screen vector reach a target pixel length
-    local w, h = love.graphics.getDimensions()
-    local visibleMaxMass = 0
-    local anyVisible = false
-    for _, p in ipairs(self.points) do
-        local x, y = self.body:localToWorld(p.distance_cm, 0)
-        if x >= 0 and x <= w and y >= 0 and y <= h then
-            anyVisible = true
-            if p.mass_g and p.mass_g > visibleMaxMass then visibleMaxMass = p.mass_g end
-        end
-    end
-    -- If none visible, use overall max
-    if not anyVisible then
-        for _, p in ipairs(self.points) do
-            if p.mass_g and p.mass_g > visibleMaxMass then visibleMaxMass = p.mass_g end
-        end
-    end
-    local gScale
-    do
-        local minDim = math.min(w, h)
-        -- Largest arrow length target: between 100px and 220px, ~25% of min dimension
-        local targetMaxPx = math.max(100, math.min(minDim * 0.25, 220))
-        if visibleMaxMass > 0 then
-            gScale = targetMaxPx / visibleMaxMass
-        else
-            -- Fallback if no masses; choose a reasonable default scale
-            gScale = 0.12
-        end
-    end
+    -- Adaptive vector scale via calculator
+    local gScale = VCalc.adaptiveGravityScale(self.body, self.points)
 
     for _, p in ipairs(self.points) do
         -- Convert body-local cm to world px using the main body transform
