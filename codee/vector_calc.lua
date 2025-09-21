@@ -27,10 +27,12 @@ function VCalc.centerOfMass(body, points)
     -- include point masses
     if points then
         for _, p in ipairs(points) do
+            if p.kind == "target" then goto continue end
             local m = p.mass_g or 0
             local d = p.distance_cm or 0
             total_m = total_m + m
             moment = moment + m * d
+            ::continue::
         end
     end
     -- include body mass at its geometric center (length/2)
@@ -67,20 +69,26 @@ function VCalc.adaptiveGravityScale(body, points)
         local x, y = body:localToWorld(u_cm or 0, 0)
         if x >= 0 and x <= w and y >= 0 and y <= h then
             anyVisible = true
-            if mass_g and mass_g > visibleMaxMass then visibleMaxMass = mass_g end
+            local mag = math.abs(mass_g or 0)
+            if mag > visibleMaxMass then visibleMaxMass = mag end
         end
     end
     -- consider point masses (only these are drawn); exclude main body mass entirely
     if points then
         for _, p in ipairs(points) do
-            consider(p.mass_g or 0, p.distance_cm or 0)
+            if p.kind ~= "target" then
+                consider(p.mass_g or 0, p.distance_cm or 0)
+            end
         end
     end
     if not anyVisible then
         -- fallback to overall max
         if points then
             for _, p in ipairs(points) do
-                if p.mass_g and p.mass_g > visibleMaxMass then visibleMaxMass = p.mass_g end
+                if p.kind ~= "target" then
+                    local mag = math.abs(p.mass_g or 0)
+                    if mag > visibleMaxMass then visibleMaxMass = mag end
+                end
             end
         end
     end

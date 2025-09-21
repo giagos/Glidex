@@ -37,7 +37,8 @@ function BodyHandler:add(opts)
         name = opts.name or ("m" .. tostring(#self.points + 1)),
         mass_g = opts.mass_g or 100,
     distance_cm = opts.distance_cm or 0, -- distance from nose towards tail (cm)
-        color = opts.color or {0.9, 0.2, 0.2},
+    color = opts.color or {0.9, 0.2, 0.2},
+    kind = opts.kind or "mass", -- "mass" | "ballast" | "target"
     }
     table.insert(self.points, p)
     return p
@@ -83,6 +84,14 @@ local function drawCGIcon(x, y, r)
     lg.circle("line", x, y, r)
 end
 
+local function drawRing(x, y, r, color)
+    local lg = love.graphics
+    if not color then return end
+    lg.setColor(color[1], color[2], color[3], color[4] or 1)
+    lg.setLineWidth(3)
+    lg.circle("line", x, y, r + 3)
+end
+
 function BodyHandler:draw()
     local body = self.body
     if not body then return end
@@ -94,9 +103,17 @@ function BodyHandler:draw()
         local x, y = body:localToWorld(p.distance_cm, 0)
         local r = massToRadius(p.mass_g)
         drawCGIcon(x, y, r)
+        -- Type highlight ring
+        if p.kind == "target" then
+            drawRing(x, y, r, {0,1,0,1}) -- green
+        elseif p.kind == "ballast" then
+            drawRing(x, y, r, {1,1,0,1}) -- yellow
+        end
         -- Gravity vector (screen down), magnitude proportional to mass and adaptive scale
-        local gvx, gvy = 0, (p.mass_g or 0) * gScale
-        VDraw.arrowWithLabel(x, y, gvx, gvy, string.format("%.0f g @ 90°", p.mass_g or 0), {1,1,1,1}, r+2)
+        if p.kind ~= "target" then
+            local gvx, gvy = 0, (p.mass_g or 0) * gScale
+            VDraw.arrowWithLabel(x, y, gvx, gvy, string.format("%.0f g @ 90°", p.mass_g or 0), {1,1,1,1}, r+2)
+        end
     end
 end
 

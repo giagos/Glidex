@@ -56,7 +56,7 @@ Body (rectangle) controls
 - Press keys to select a field, type a number, press Enter to apply:
 	- L: Length (cm)
 	- T: Thickness (cm)
-	- M: Mass (g)
+	- W: Mass (g)
 	- A: Angle (deg)
 
 Point masses (CG markers)

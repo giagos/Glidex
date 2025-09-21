@@ -38,12 +38,13 @@ function UI:draw()
     lg.print(string.format("Thickness (cm): %.1f", self.body.thickness_cm), panelX + 10, y); y = y + 18
     lg.print(string.format("Mass (g): %.0f", self.body.mass_g), panelX + 10, y); y = y + 18
     lg.print(string.format("Angle (deg): %.1f", self.body:getAngleDegrees()), panelX + 10, y); y = y + 22
-    lg.print("Edit: [L] length, [T] thickness, [M] mass, [A] angle → type number → Enter", panelX + 10, y); y = y + 22
+    lg.print("Edit: [L] length, [T] thickness, [W] mass, [A] angle → type number → Enter", panelX + 10, y); y = y + 22
 
     -- Point masses
-    lg.print("Point Masses (distance from nose, cm)", panelX + 10, y); y = y + 20
+    lg.print("Components (distance from nose, cm)", panelX + 10, y); y = y + 20
     for i, p in ipairs(self.handler.points) do
-        local line = string.format("%d) %s  mass=%.0fg  distance=%.1f cm", i, p.name or ("m"..i), p.mass_g, p.distance_cm)
+        local kind = p.kind or "mass"
+        local line = string.format("%d) [%s] %s  mass=%.0fg  distance=%.1f cm", i, kind, p.name or ("m"..i), p.mass_g, p.distance_cm)
         if self.selected == i then
             lg.setColor(0.9, 0.9, 0.9, 0.4)
             lg.rectangle("fill", panelX + 6, y - 2, panelW - 12, 18)
@@ -55,8 +56,9 @@ function UI:draw()
 
     y = y + 10
     lg.print("Click a row to select.", panelX + 10, y); y = y + 18
-    lg.print("Mass edit: [D] distance (cm), [M] mass (g)", panelX + 10, y); y = y + 18
-    lg.print("Mass manage: [+] add, [-] remove", panelX + 10, y); y = y + 18
+    lg.print("Edit selected: [D] distance (cm), [M] mass (g)", panelX + 10, y); y = y + 18
+    lg.print("Add: [+] mass, [B] ballast (±g), [G] CG target", panelX + 10, y); y = y + 18
+    lg.print("Remove: [-] selected", panelX + 10, y); y = y + 18
     if self.editField then
         lg.print("Editing " .. self.editField .. ": " .. self.inputText, panelX + 10, y)
     end
@@ -64,7 +66,17 @@ end
 
 function UI:keypressed(key)
     if key == "+" or key == "=" then
-    self.handler:add({ mass_g = 100, distance_cm = 0 })
+        self.handler:add({ mass_g = 100, distance_cm = 0, kind = "mass" })
+        self.selected = #self.handler.points
+        return
+    end
+    if key == "b" then
+        self.handler:add({ mass_g = 0, distance_cm = 0, kind = "ballast", name = "ballast" })
+        self.selected = #self.handler.points
+        return
+    end
+    if key == "g" then
+        self.handler:add({ mass_g = 0, distance_cm = (self.body.length_cm or 0) * 0.5, kind = "target", name = "target" })
         self.selected = #self.handler.points
         return
     end
@@ -80,7 +92,7 @@ function UI:keypressed(key)
     -- Body property editing
     if key == "l" then self.editField = "body.length"; self.inputText = ""; return end
     if key == "t" then self.editField = "body.thickness"; self.inputText = ""; return end
-    if key == "m" and (not self.selected) then self.editField = "body.mass"; self.inputText = ""; return end
+    if key == "w" then self.editField = "body.mass"; self.inputText = ""; return end
     if key == "a" then self.editField = "body.angle"; self.inputText = tostring(math.floor(self.body:getAngleDegrees()+0.5)); return end
 
     -- Selected point editing
@@ -95,7 +107,14 @@ function UI:keypressed(key)
             if self.editField == "body.mass" then self.body.mass_g = math.max(1, val) end
             if self.editField == "body.angle" then self.body:setAngleDegrees(val) end
             if self.editField == "distance" and self.selected then self.handler.points[self.selected].distance_cm = math.max(0, math.min(val, self.body.length_cm)) end
-            if self.editField == "mass" and self.selected then self.handler.points[self.selected].mass_g = math.max(1, val) end
+            if self.editField == "mass" and self.selected then
+                local k = self.handler.points[self.selected].kind or "mass"
+                if k == "ballast" then
+                    self.handler.points[self.selected].mass_g = val -- allow negative for ballast
+                else
+                    self.handler.points[self.selected].mass_g = math.max(1, val)
+                end
+            end
         end
         self.editField = nil
         self.inputText = ""

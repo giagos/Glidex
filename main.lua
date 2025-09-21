@@ -5,6 +5,7 @@ local BodyHandler = require("codee.body_handler")
 local UI = require("codee.ui")
 local VCalc = require("codee.vector_calc")
 local VDraw = require("codee.vector_draw")
+local AutoBalance = require("codee.autobalance")
 
 local message = "Welcome to Daedalus Dream Works Glidex"
 
@@ -48,6 +49,11 @@ function love.draw()
     love.graphics.setColor(1, 1, 1, 1) -- white
     love.graphics.print(message, 20, 20)
     love.graphics.print(string.format("App: %s | Version: %s", config.appName, config.version), 20, 40)
+
+    -- Auto-adjust ballast to meet CG target when both visible
+    if body and handler then
+        AutoBalance.apply(body, handler)
+    end
 
     -- Draw the body as a filled rectangle with outline
     if body then body:draw() end
