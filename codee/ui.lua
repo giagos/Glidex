@@ -10,6 +10,9 @@ function UI.new(handler, body)
     ui.selected = nil -- index in handler.points
     ui.editField = nil -- "distance" or "mass" or body fields
     ui.inputText = ""
+    ui.showSetup = false
+    ui.setupEditField = nil -- "setup.length" | "setup.thickness" | "setup.mass" | "setup.angle" | "setup.g_per_cm"
+    ui.setupBtn = {x=16, y=60, w=160, h=28}
     return ui
 end
 
@@ -26,6 +29,14 @@ function UI:draw()
     local panelX = w - 300
     local panelW = 280
     local y = 20
+
+    -- Left-side button: Fuselage Setup
+    do
+        local b = self.setupBtn
+        lg.setColor(1,1,1,1)
+        lg.rectangle("line", b.x, b.y, b.w, b.h)
+        lg.print("Fuselage Setup", b.x + 8, b.y + 6)
+    end
 
     -- Panel
     lg.setColor(1,1,1,1)
@@ -62,9 +73,102 @@ function UI:draw()
     if self.editField then
         lg.print("Editing " .. self.editField .. ": " .. self.inputText, panelX + 10, y)
     end
+
+    -- Setup modal
+    if self.showSetup then
+        -- dim background lightly
+        lg.setColor(0.8,0.8,0.8,0.12)
+        lg.rectangle("fill", 0, 0, w, h)
+        local mw, mh = math.min(420, w-80), 240
+        local mx, my = 40, 100
+        lg.setColor(0.85,0.85,0.85,0.85) -- light translucent gray
+        lg.rectangle("fill", mx, my, mw, mh)
+        lg.setColor(0,0,0,1)
+        lg.rectangle("line", mx, my, mw, mh)
+        local yy = my + 12
+        lg.print("Fuselage Setup (cm, g, deg)", mx + 12, yy); yy = yy + 22
+        -- show current values; if g_per_cm set, mass is computed
+        local gpc = self.body.g_per_cm
+        if gpc and gpc > 0 then
+            local computed = (self.body.length_cm or 0) * gpc
+            self.body.mass_g = computed
+        end
+        lg.print(string.format("Length [L]: %.1f cm", self.body.length_cm), mx + 12, yy); yy = yy + 18
+        lg.print(string.format("Thickness [T]: %.1f cm", self.body.thickness_cm), mx + 12, yy); yy = yy + 18
+        if gpc and gpc > 0 then
+            lg.print(string.format("Mass [W]: %.0f g (computed)", self.body.mass_g), mx + 12, yy)
+        else
+            lg.print(string.format("Mass [W]: %.0f g", self.body.mass_g), mx + 12, yy)
+        end
+        yy = yy + 18
+        lg.print(string.format("Angle [A]: %.1f deg", self.body:getAngleDegrees()), mx + 12, yy); yy = yy + 18
+        lg.print(string.format("g/cm [G]: %s", gpc and string.format("%.3f", gpc) or "(none)"), mx + 12, yy); yy = yy + 24
+        lg.print("Enter value after key (L/T/W/A/G). Esc to close.", mx + 12, yy); yy = yy + 18
+        if self.setupEditField then
+            lg.print("Editing " .. self.setupEditField .. ": " .. self.inputText, mx + 12, yy)
+        end
+    end
 end
 
 function UI:keypressed(key)
+    -- Modal handler first
+    if self.showSetup then
+        if key == "escape" then
+            self.showSetup = false
+            self.setupEditField = nil
+            self.inputText = ""
+            return
+        end
+        if key == "l" then self.setupEditField = "setup.length"; self.inputText = ""; return end
+        if key == "t" then self.setupEditField = "setup.thickness"; self.inputText = ""; return end
+        if key == "a" then self.setupEditField = "setup.angle"; self.inputText = tostring(math.floor(self.body:getAngleDegrees()+0.5)); return end
+        if key == "g" then self.setupEditField = "setup.g_per_cm"; self.inputText = ""; return end
+        if key == "w" then
+            -- only allow manual mass if g/cm is not set
+            if not (self.body.g_per_cm and self.body.g_per_cm > 0) then
+                self.setupEditField = "setup.mass"; self.inputText = ""
+            end
+            return
+        end
+        if key == "return" or key == "kpenter" then
+            local val = tonumber(self.inputText)
+            if val then
+                if self.setupEditField == "setup.length" then
+                    self.body.length_cm = math.max(1, val)
+                elseif self.setupEditField == "setup.thickness" then
+                    self.body.thickness_cm = math.max(0.1, val)
+                elseif self.setupEditField == "setup.mass" then
+                    self.body.g_per_cm = nil
+                    self.body.mass_g = math.max(1, val)
+                elseif self.setupEditField == "setup.angle" then
+                    self.body:setAngleDegrees(val)
+                elseif self.setupEditField == "setup.g_per_cm" then
+                    if val and val > 0 then
+                        self.body.g_per_cm = val
+                        self.body.mass_g = self.body.length_cm * val
+                    else
+                        self.body.g_per_cm = nil
+                    end
+                end
+                -- Re-center after changes
+                self:centerBody()
+            end
+            self.setupEditField = nil
+            self.inputText = ""
+            return
+        end
+        if self.setupEditField then
+            if key == "backspace" then
+                self.inputText = self.inputText:sub(1, -2)
+            elseif key:match("^[%d%.%-]$") then
+                self.inputText = self.inputText .. key
+            end
+            return
+        end
+        -- in modal but no edit: ignore other keys
+        return
+    end
+
     if key == "+" or key == "=" then
         self.handler:add({ mass_g = 100, distance_cm = 0, kind = "mass" })
         self.selected = #self.handler.points
@@ -92,7 +196,7 @@ function UI:keypressed(key)
     -- Body property editing
     if key == "l" then self.editField = "body.length"; self.inputText = ""; return end
     if key == "t" then self.editField = "body.thickness"; self.inputText = ""; return end
-    if key == "w" then self.editField = "body.mass"; self.inputText = ""; return end
+    if key == "w" then self.body.g_per_cm = nil; self.editField = "body.mass"; self.inputText = ""; return end
     if key == "a" then self.editField = "body.angle"; self.inputText = tostring(math.floor(self.body:getAngleDegrees()+0.5)); return end
 
     -- Selected point editing
@@ -134,6 +238,16 @@ end
 
 function UI:mousepressed(mx, my, button)
     if button ~= 1 then return end
+    -- Check setup button click
+    do
+        local b = self.setupBtn
+        if mx >= b.x and mx <= b.x + b.w and my >= b.y and my <= b.y + b.h then
+            self.showSetup = true
+            self.setupEditField = nil
+            self.inputText = ""
+            return
+        end
+    end
     -- Click rows
     local w, h = love.graphics.getDimensions()
     local panelX = w - 300
