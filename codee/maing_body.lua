@@ -28,10 +28,10 @@ local DEFAULT_SCALE = 3 -- 1 cm = 3 px (tweak in main if needed)
 function Body.new(opts)
     opts = opts or {}
     local b = setmetatable({}, Body)
-    b.length_cm = opts.length_cm or 50
-    b.depth_cm = opts.depth_cm or 20
-    b.thickness_cm = opts.thickness_cm or 2
-    b.mass_g = opts.mass_g or 500
+    b.length_cm = opts.length_cm or 0
+    b.depth_cm = opts.depth_cm or 0
+    b.thickness_cm = opts.thickness_cm or 0
+    b.mass_g = opts.mass_g or 0
     b.color = opts.color or {1, 0.6, 0.2}
     b.scale = opts.scale or DEFAULT_SCALE
     -- Body origin on screen in pixels at the nose (RIGHT end), mid-height.

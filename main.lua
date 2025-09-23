@@ -28,10 +28,10 @@ function love.load()
 
     -- Create a rectangle body (side view)
     body = Body.new({
-        length_cm = 120,    -- x dimension (cm)
-        depth_cm = 30,      -- not drawn in pure side view, kept for physics
-        thickness_cm = 5,   -- y dimension (cm)
-        mass_g = 2500,
+        length_cm = 0,
+        depth_cm = 0,
+        thickness_cm = 0,
+        mass_g = 0,
         color = {0.2, 0.6, 1.0},
         origin_x = 60,
         origin_y = 200,
@@ -40,12 +40,23 @@ function love.load()
     body:setScale(3) -- 1 cm = 3 px
 
     handler = BodyHandler.new(body)
-    handler:add({ name = "m1", mass_g = 200, distance_cm = 20 })
     ui = UI.new(handler, body)
+    -- Open setup modal on first screen
+    ui.showSetup = true
     ui:centerBody()
 end
 
+function love.update(dt)
+    if ui and ui.update then ui:update(dt) end
+end
+
 function love.draw()
+    -- If setup modal is open, draw only the modal and nothing behind
+    if ui and ui.showSetup then
+        if ui then ui:draw() end
+        return
+    end
+
     love.graphics.setColor(1, 1, 1, 1) -- white
     love.graphics.print(message, 20, 20)
     love.graphics.print(string.format("App: %s | Version: %s", config.appName, config.version), 20, 40)
