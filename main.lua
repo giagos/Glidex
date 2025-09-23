@@ -57,20 +57,19 @@ function love.draw()
         return
     end
 
-    love.graphics.setColor(1, 1, 1, 1) -- white
-    love.graphics.print(message, 20, 20)
-    love.graphics.print(string.format("App: %s | Version: %s", config.appName, config.version), 20, 40)
+    -- All non-graphics text is drawn by the UI system
 
     -- Auto-adjust ballast to meet CG target when both visible
     if body and handler then
         AutoBalance.apply(body, handler)
     end
 
-    -- Draw the body as a filled rectangle with outline
+    -- Draw graphics inside a canvas (windowed or fullscreen) and keep centered
+    local cx, cy, cw, ch = ui:beginCanvas()
+    -- Keep graphics centered in the canvas window
+    ui:centerBodyInRect(cx, cy, cw, ch)
     if body then body:draw() end
-
     if handler then handler:draw() end
-
     -- Resultant gravity vector in green at the overall center of mass
     if body and handler then
         local rx, ry, rvx, rvy, total_m, _ = VCalc.resultantGravityVector(body, handler.points)
@@ -79,21 +78,9 @@ function love.draw()
             VDraw.arrowWithLabel(rx, ry, rvx, rvy, string.format("%.0f g total", total_m), {0,1,0,1}, 0)
         end
     end
+    ui:endCanvas() -- end canvas and clear clip
 
-    -- Bottom-left CG readout (in cm from the nose)
-    do
-        local w, h = love.graphics.getDimensions()
-        love.graphics.setColor(1, 1, 1, 1)
-        local text = "CG: N/A"
-        if body then
-            local pts = (handler and handler.points) or {}
-            local com_left_cm, total_m = VCalc.centerOfMassFromLeft(body, pts)
-            if (total_m or 0) > 0 then
-                text = string.format("CG: %.1f cm from nose (left)", com_left_cm)
-            end
-        end
-        love.graphics.print(text, 16, h - 24)
-    end
+    -- CG HUD is drawn by the UI
     if ui then ui:draw() end
 end
 
