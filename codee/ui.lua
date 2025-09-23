@@ -2,6 +2,7 @@
 -- UI module: handles drawing and input for body and point masses
 local UI = {}
 local utf8 = require("utf8")
+local UIE = require("codee.ui_elemets")
 UI.__index = UI
 
 function UI.new(handler, body)
@@ -9,18 +10,17 @@ function UI.new(handler, body)
     ui.handler = handler
     ui.body = body
     ui.selected = nil -- index in handler.points
-    ui.editField = nil -- "distance" or "mass" or body fields
+    ui.editField = nil -- editing mode
     ui.inputText = ""
     ui.showSetup = false
-    ui.setupEditField = nil -- "setup.length" | "setup.thickness" | "setup.mass" | "setup.angle" | "setup.g_per_cm"
+    ui.setupEditField = nil
     ui.setupBtn = {x=16, y=60, w=160, h=28}
     ui.hit = { body = {}, comp = { mass = {}, dist = {} }, setup = {} }
-    -- Command-console feature was removed for simplicity.
     -- Preferences and layout
     ui.settings = { panelWidthFrac = 0.22, fontSize = 14, uiScalePerc = 100, fullscreen = false, windowW = nil, windowH = nil, resIndex = 1 }
     ui.menu = { open = false, bounds = {x=0,y=0,w=0,h=0}, items = { {id="settings", label="Settings..."} } }
     ui.showSettings = false
-    ui.settingsEditField = nil -- "settings.panelWidthFrac" | "settings.fontSize"
+    ui.settingsEditField = nil
     ui.canvasFullscreen = true
     -- Inspector panel collapse/expand state
     ui.panelCollapsed = ui.panelCollapsed or false
@@ -56,31 +56,15 @@ function UI.new(handler, body)
 end
 -- Helpers: text truncation and clipped label/button
 function UI:_truncate(text, maxW)
-    local lg = love.graphics
-    local t = tostring(text or "")
-    local font = lg.getFont()
-    if font:getWidth(t) <= maxW then return t end
-    local ell = "..." -- ASCII ellipsis to avoid multi-byte issues
-    while #t > 0 and font:getWidth(t .. ell) > maxW do
-        local byteoffset = utf8.offset(t, -1)
-        if not byteoffset then t = ""; break end
-        t = t:sub(1, byteoffset - 1)
-    end
-    return t .. ell
+    return UIE.truncate(text, maxW, love.graphics.getFont())
 end
 
 function UI:_labelClipped(x, y, w, text)
-    local lg = love.graphics
-    local t = self:_truncate(text, w)
-    lg.print(t, x, y)
+    UIE.labelClipped(x, y, w, text, love.graphics.getFont())
 end
 
 function UI:_button(x, y, w, h, label)
-    local lg = love.graphics
-    lg.rectangle("line", x, y, w, h)
-    local pad = 6
-    self:_labelClipped(x + pad, y + math.floor((h - lg.getFont():getHeight())/2), w - pad*2, label)
-    return {x=x,y=y,w=w,h=h}
+    return UIE.button(x, y, w, h, label, love.graphics.getFont())
 end
 
 
@@ -113,49 +97,16 @@ end
 -- beginWindow draws a lined frame and optional title bar, then applies a scissor for content
 -- Returns content rect (cx, cy, cw, ch) and header height so callers can layout safely
 function UI:beginWindow(id, x, y, w, h, title)
-    local lg = love.graphics
-    -- frame
-    lg.setColor(1,1,1,1)
-    lg.rectangle("line", x, y, w, h)
-    -- optional title bar
-    local headerH = 0
-    if title and title ~= "" then
-        headerH = math.max(0, lg.getFont():getHeight() + 6)
-        lg.setColor(0.85,0.85,0.85,1)
-        lg.rectangle("fill", x+1, y+1, w-2, headerH)
-        lg.setColor(0,0,0,1)
-        lg.print(title, x + 8, y + math.floor((headerH - lg.getFont():getHeight())/2))
-        lg.setColor(1,1,1,1)
-    end
-    -- clip content
-    local cx, cy, cw, ch = x + 2, y + 2 + headerH, w - 4, h - 4 - headerH
-    lg.setScissor(cx, cy, cw, ch)
-    return cx, cy, cw, ch, headerH
+    return UIE.beginWindow(id, x, y, w, h, title)
 end
 -- Basic contrast utilities
-function UI:_relativeLuminance(r,g,b)
-    -- simple perceived luminance approximation
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-end
-
-function UI:contrastColorFor(bgR, bgG, bgB)
-    local L = self:_relativeLuminance(bgR or 0, bgG or 0, bgB or 0)
-    if L > 0.6 then return 0,0,0 else return 1,1,1 end
-end
-
-function UI:maybeInvertColor(fr, fg, fb, br, bg, bb, threshold)
-    threshold = threshold or 0.25
-    local Lf = self:_relativeLuminance(fr, fg, fb)
-    local Lb = self:_relativeLuminance(br, bg, bb)
-    if math.abs(Lf - Lb) < threshold then
-        return 1-fr, 1-fg, 1-fb
-    end
-    return fr, fg, fb
-end
+UI._relativeLuminance = UIE.relativeLuminance
+UI.contrastColorFor = UIE.contrastColorFor
+UI.maybeInvertColor = UIE.maybeInvertColor
 
 
 function UI:endWindow()
-    love.graphics.setScissor()
+    UIE.endWindow()
 end
 
 -- Alias requested naming style
@@ -361,89 +312,8 @@ function UI:draw()
     self:beginFrame()
     -- always start with no scissor to avoid clipping overlays
     love.graphics.setScissor()
-    -- If Setup modal is open, draw ONLY the modal (full-screen overlay) and return
-    if self.showSetup then
-        -- dim background
-        lg.setColor(0.8,0.8,0.8,0.12)
-        lg.rectangle("fill", 0, 0, w, h)
-        -- Auto-size modal to content
-        local fh = lg.getFont():getHeight()
-        local lines = {}
-        table.insert(lines, "Fuselage Setup (cm, g, deg)")
-        do
-            local gpc = self.body.g_per_cm
-            local L1 = string.format("Length [L]: %.1f cm", self.body.length_cm)
-            local L2 = string.format("Thickness [T]: %.1f cm", self.body.thickness_cm)
-            local L3
-            if gpc and gpc > 0 then
-                L3 = string.format("Mass [W]: %.0f g (computed)", self.body.mass_g)
-            else
-                L3 = string.format("Mass [W]: %.0f g", self.body.mass_g)
-            end
-            local L4 = string.format("Angle [A]: %.1f deg", self.body:getAngleDegrees())
-            local L5 = string.format("g/cm [G]: %s", gpc and string.format("%.3f", gpc) or "(none)")
-            local L6 = "Use Up/Down or Tab to change field. Type to edit. Enter to apply. Esc to close."
-            table.insert(lines, L1)
-            table.insert(lines, L2)
-            table.insert(lines, L3)
-            table.insert(lines, L4)
-            table.insert(lines, L5)
-            table.insert(lines, L6)
-            if self.setupEditField then
-                table.insert(lines, "Editing " .. self.setupEditField .. ": " .. self.inputText)
-            end
-        end
-    local maxW = 0
-    for _, t in ipairs(lines) do maxW = math.max(maxW, lg.getFont():getWidth(t)) end
-    -- Symmetric padding: beginWindow content has 2px border; add padX both sides
-    local padX, padY = 12, 12
-    local mw = math.min(w - 40, math.max(260, maxW + 4 + padX*2))
-    -- Height: padY + (title line) + (#other lines * lineH) + padY
-    local titleH = fh + 10
-    local bodyLines = #lines - 1
-    local lineH = fh + 6
-    local mh = math.min(h - 40, padY + titleH + bodyLines * lineH + padY)
-        local mx, my = math.floor((w - mw)/2), math.floor((h - mh)/2)
-        lg.setColor(0.85,0.85,0.85,0.95)
-        lg.rectangle("fill", mx, my, mw, mh)
-        lg.setColor(0,0,0,1)
-        lg.rectangle("line", mx, my, mw, mh)
-        local yy = my + 12
-    self:drawLabel(mx + padX, yy, mw - padX*2, "Fuselage Setup (cm, g, deg)"); yy = yy + 22
-        local gpc = self.body.g_per_cm
-        if gpc and gpc > 0 then self.body.mass_g = (self.body.length_cm or 0) * gpc end
-        -- ensure a default focused field
-        if not self.setupEditField then self.setupEditField = "setup.length" end
-        -- Clip content to window
-        love.graphics.setScissor(mx+1, my+1, mw-2, mh-2)
-        -- draw fields and compute hit boxes
-    self:drawLabel(mx + padX, yy, mw - padX*2, string.format("Length [L]: %.1f cm", self.body.length_cm)); self.hit.setup.length = {x=mx+padX-2,y=yy-4,w=mw-(padX*2-4),h=lg.getFont():getHeight()+6}; yy = yy + (lg.getFont():getHeight()+6)
-    self:drawLabel(mx + padX, yy, mw - padX*2, string.format("Thickness [T]: %.1f cm", self.body.thickness_cm)); self.hit.setup.thickness = {x=mx+padX-2,y=yy-4,w=mw-(padX*2-4),h=lg.getFont():getHeight()+6}; yy = yy + (lg.getFont():getHeight()+6)
-        if gpc and gpc > 0 then
-            self:drawLabel(mx + padX, yy, mw - padX*2, string.format("Mass [W]: %.0f g (computed)", self.body.mass_g))
-        else
-            self:drawLabel(mx + padX, yy, mw - padX*2, string.format("Mass [W]: %.0f g", self.body.mass_g)); self.hit.setup.mass = {x=mx+padX-2,y=yy-4,w=mw-(padX*2-4),h=lg.getFont():getHeight()+6}
-        end
-        yy = yy + (lg.getFont():getHeight()+6)
-        self:drawLabel(mx + padX, yy, mw - padX*2, string.format("Angle [A]: %.1f deg", self.body:getAngleDegrees())); self.hit.setup.angle = {x=mx+padX-2,y=yy-4,w=mw-(padX*2-4),h=lg.getFont():getHeight()+6}; yy = yy + (lg.getFont():getHeight()+6)
-        self:drawLabel(mx + padX, yy, mw - padX*2, string.format("g/cm [G]: %s", gpc and string.format("%.3f", gpc) or "(none)")); self.hit.setup.gpc = {x=mx+padX-2,y=yy-4,w=mw-(padX*2-4),h=lg.getFont():getHeight()+6}; yy = yy + (lg.getFont():getHeight()+10)
-        self:drawLabel(mx + padX, yy, mw - padX*2, "Use Up/Down or Tab to change field. Type to edit. Enter to apply. Esc to close."); yy = yy + (lg.getFont():getHeight()+2)
-        if self.setupEditField then self:drawLabel(mx + padX, yy, mw - padX*2, "Editing " .. self.setupEditField .. ": " .. self.inputText) end
-        -- Black rectangular indicator behind current field
-        local function fillFocus(r)
-            if not r then return end
-            love.graphics.setColor(0,0,0,0.35)
-            love.graphics.rectangle("fill", r.x, r.y, r.w, r.h)
-            love.graphics.setColor(1,1,1,1)
-        end
-        if self.setupEditField == "setup.length" then fillFocus(self.hit.setup.length) end
-        if self.setupEditField == "setup.thickness" then fillFocus(self.hit.setup.thickness) end
-        if self.setupEditField == "setup.mass" then fillFocus(self.hit.setup.mass) end
-        if self.setupEditField == "setup.angle" then fillFocus(self.hit.setup.angle) end
-        if self.setupEditField == "setup.g_per_cm" then fillFocus(self.hit.setup.gpc) end
-        love.graphics.setScissor()
-        return
-    end
+    -- If Setup modal is open, delegate to section and return
+    if require('codee.ui_elemets.sections.setup_modal').draw(self) then return end
     -- apply consistent font
     local oldFont = lg.getFont()
     if self.font then lg.setFont(self.font) end
@@ -502,10 +372,12 @@ function UI:draw()
     end
 
     -- Clear hit maps (will be rebuilt this frame)
+    self.hit = self.hit or { body = {}, comp = { mass = {}, dist = {}, icon = {} }, setup = {}, settings = {}, selection = {} }
+    self.hit.comp = self.hit.comp or { mass = {}, dist = {}, icon = {} }
     self.hit.body = {}
     self.hit.comp.mass = {}
     self.hit.comp.dist = {}
-        self.hit.comp.icon = {}
+    self.hit.comp.icon = {}
     self.hit.setup = {}
     self.hit.settings = {}
     self.hit.selection = {}
@@ -559,8 +431,9 @@ function UI:draw()
             local descent = font:getDescent()
             local rectY = y - ascent
             local rectH = (ascent - descent)
-            local pad = 2
-            self.hit.selection.mass = {x=xMass - pad, y=rectY - pad, w=wMass + pad*2, h=rectH + pad*2}
+            local padX = math.floor(font:getWidth(" ") * 0.5 + 0.5)
+            local padY = math.floor((rectH) * 0.15 + 0.5)
+            self.hit.selection.mass = {x=xMass - padX, y=rectY - padY, w=wMass + padX*2, h=rectH + padY*2}
             y = y + lineH
             -- Distance (click to edit)
             local distLabel = "Distance (cm): "
@@ -568,7 +441,7 @@ function UI:draw()
             local xDist = x0 + font:getWidth(distLabel)
             local wDist = font:getWidth(distVal)
             self:drawLabel(left, y, cw - 16, distLabel .. distVal)
-            self.hit.selection.dist = {x=xDist - pad, y=y - ascent - pad, w=wDist + pad*2, h=rectH + pad*2}
+            self.hit.selection.dist = {x=xDist - padX, y=y - ascent - padY, w=wDist + padX*2, h=rectH + padY*2}
             y = y + lineH + 6
         else
             self:drawLabel(left, y, cw - 16, "No component selected. Click a row."); y = y + lineH + 6
@@ -577,7 +450,7 @@ function UI:draw()
     -- Point masses list
     self:drawLabel(left, y, cw - 16, "Components (distance from nose, cm)"); y = y + 20
     -- reuse current font
-    local rowStep = font:getHeight() + 6
+    local rowStep = (UIE.layout and UIE.layout.rowStep and UIE.layout.rowStep(font)) or (font:getHeight() + 6)
     -- expose list metrics for precise hit testing
     self.listStartY = y
     self.rowStep = rowStep
@@ -593,16 +466,22 @@ function UI:draw()
         local distLabel = "distance="
         local distVal = string.format("%.1f cm", p.distance_cm)
         local line = base .. massLabel .. massVal .. sep .. distLabel .. distVal
-        local ascent = font:getAscent()
-        local descent = font:getDescent()
-        local rowRectY = y - ascent
-        local rowRectH = (ascent - descent)
+        local fh = font:getHeight()
+        local rowRectY = y
+        local rowRectH = fh
+        -- Selection indicator: exact rectangle matching displayed (truncated) text bounds
+        local selRect
         if self.selected == i then
-            lg.setColor(0, 1, 0, 0.25)
-            lg.rectangle("fill", panelX + 6, rowRectY - 2, panelW - 12, rowRectH + 4)
-            lg.setColor(0, 1, 0, 0.9)
-            lg.rectangle("line", panelX + 6, rowRectY - 2, panelW - 12, rowRectH + 4)
-            lg.setColor(1,1,1,1)
+            local textX = panelX + 10
+            local maxLabelW = cw - 20 -- same width used for drawing the label
+            local displayed = self:_truncate(line, maxLabelW)
+            local shownW = font:getWidth(displayed)
+            -- clamp to content width
+            local rx = textX
+            local rw = math.min(shownW, maxLabelW)
+            local ry = rowRectY
+            local rh = rowRectH
+            selRect = {x=rx, y=ry, w=rw, h=rh}
         end
     self:drawLabel(panelX + 10, y, cw - 20, line)
         -- clickable regions for mass value and distance value
@@ -615,12 +494,20 @@ function UI:draw()
         local xDist = x0 + font:getWidth(base .. massLabel .. massVal .. sep .. distLabel)
         local wDist = font:getWidth(distVal)
         -- Align hitboxes to text using ascent/descent and add a little padding
-        local rectY = y - ascent
-        local rectH = (ascent - descent)
+        local rectY = y
+        local rectH = fh
         local pad = 2
         self.hit.comp.mass[i] = {x=xMass - pad, y=rectY - pad, w=wMass + pad*2, h=rectH + pad*2}
         self.hit.comp.dist[i] = {x=xDist - pad, y=rectY - pad, w=wDist + pad*2, h=rectH + pad*2}
-    y = y + rowStep
+        -- Draw label first, then overlay the selection rectangle so it remains visible
+        if selRect then
+            lg.setColor(0, 0, 0, 0.40)
+            lg.rectangle("fill", selRect.x, selRect.y, selRect.w, selRect.h)
+            lg.setColor(1, 1, 1, 0.9)
+            lg.rectangle("line", selRect.x, selRect.y, selRect.w, selRect.h)
+            lg.setColor(1,1,1,1)
+        end
+        y = y + rowStep
     end
 
     y = y + 10
@@ -666,108 +553,11 @@ function UI:draw()
     -- (removed duplicate setup modal block; modal is drawn exclusively earlier)
 
     -- Settings modal (classic WX-style dialog)
-    if self.showSettings then
-        -- Safety: if mouse not down, stop dragging slider
-        if self._dragScale and (not love.mouse.isDown(1)) then self._dragScale = false end
-        love.graphics.setScissor() -- ensure not clipped by panel
-        lg.setColor(0.1,0.1,0.1,0.55)
-        lg.rectangle("fill", 0, 0, w, h)
-
-        -- Compute dynamic modal size
-        local mw = math.min(560, w - 80)
-        local baseTop = 12 + 22 + 22 -- top pad + title + resolution row
-        local listH = 0
-        if self._resOpen and self.resolutions then
-            listH = #self.resolutions * 20 + 6 + 8 -- dropdown + margin below
-        end
-        local tail = 28 + 18 + 12 + 16 + 22 + 22 + 18 + (self.settingsEditField and 18 or 0)
-        local desired = baseTop + listH + tail + 12 -- bottom pad
-        local maxH = h - 80
-        local mh = math.min(math.max(260, desired), maxH)
-        local mx, my = math.floor((w - mw)/2), math.floor((h - mh)/2)
-
-        lg.setColor(0.85,0.85,0.85,0.98)
-        lg.rectangle("fill", mx, my, mw, mh)
-        lg.setColor(0,0,0,1)
-        lg.rectangle("line", mx, my, mw, mh)
-        local yy = my + 12
-        lg.print("Settings", mx + 12, yy); yy = yy + 22
-        -- Resolution dropdown row
-        local r = self.resolutions and self.resolutions[self.settings.resIndex or 1]
-        local fRes = string.format("Resolution: %s", r and r.label or "(unknown)")
-        lg.print(fRes, mx + 12, yy); self.hit.settings.res = {x=mx+12,y=yy-2,w=mw-24,h=18}; yy = yy + 22
-        if self._resOpen and self.resolutions then
-            local fullListH = #self.resolutions * 20 + 6
-            local lx, ly, lw2 = mx + 12, yy, math.min(mw-24, 360)
-            -- clamp dropdown height to fit inside modal
-            local remaining = (my + mh) - ly - 12 - (28 + 18 + 12 + 16 + 22 + 22 + 18) -- leave space for rest of controls + bottom pad
-            local lh2 = math.max(40, math.min(fullListH, remaining))
-            lg.setColor(0.2,0.2,0.2,0.98)
-            lg.rectangle("fill", lx, ly, lw2, lh2)
-            lg.setColor(1,1,1,1)
-            lg.rectangle("line", lx, ly, lw2, lh2)
-            -- clip list content to box
-            love.graphics.setScissor(lx, ly, lw2, lh2)
-            local yy2 = ly + 4
-            for i, it in ipairs(self.resolutions) do
-                lg.print(it.label, lx + 8, yy2)
-                it._bounds = {x=lx, y=yy2-2, w=lw2, h=18, idx=i}
-                yy2 = yy2 + 20
-            end
-            love.graphics.setScissor()
-            yy = ly + lh2 + 8
-        end
-        -- Fullscreen toggle button
-        local fsLabel = string.format("Fullscreen: %s", self.settings.fullscreen and "On" or "Off")
-        self.hit.settings.fullscreenBtn = {x=mx+12, y=yy-2, w=160, h=22}
-        self:drawButton(self.hit.settings.fullscreenBtn.x, self.hit.settings.fullscreenBtn.y, self.hit.settings.fullscreenBtn.w, self.hit.settings.fullscreenBtn.h, fsLabel)
-        yy = yy + 28
-        -- UI scale slider
-        local sLabel = string.format("UI scale: %d%%", self.settings.uiScalePerc or 100)
-        lg.print(sLabel, mx + 12, yy); yy = yy + 18
-        local barX, barY, barW, barH = mx + 12, yy, mw - 24, 12
-        self.hit.settings.scaleBar = {x=barX, y=barY, w=barW, h=barH}
-        lg.setColor(0.2,0.2,0.2,1); lg.rectangle("fill", barX, barY + barH/2 - 2, barW, 4)
-        lg.setColor(1,1,1,1); lg.rectangle("line", barX, barY + barH/2 - 2, barW, 4)
-        local perc = math.max(50, math.min(200, self.settings.uiScalePerc or 100))
-        local knobX = barX + (perc - 50) / 150 * barW
-        lg.setColor(1,1,1,1); lg.rectangle("fill", knobX-4, barY, 8, barH)
-        yy = yy + barH + 16
-        -- Existing text options
-        local f1 = string.format("Panel width (%% of screen): %.0f%%", (self.settings.panelWidthFrac or 0.22)*100)
-        lg.print(f1, mx + 12, yy); self.hit.settings.panel = {x=mx+12,y=yy-2,w=mw-24,h=18}; yy = yy + 22
-        local f3 = string.format("Base font size (px): %d", self.settings.fontSize or 14)
-        lg.print(f3, mx + 12, yy); self.hit.settings.font = {x=mx+12,y=yy-2,w=mw-24,h=18}; yy = yy + 22
-        lg.print("Tab to switch. Enter to apply. Esc to close.", mx + 12, yy); yy = yy + 18
-        if self.settingsEditField then
-            lg.print("Editing " .. self.settingsEditField .. ": " .. self.inputText, mx + 12, yy)
-        end
-    end
+    if self.showSettings then require('codee.ui_elemets.sections.settings_modal').draw(self) end
 
     -- CG HUD (bottom-left), UI-managed
-    do
-        local margin = 12
-        local fh = lg.getFont():getHeight()
-        local text = "CG: N/A"
-        if self.body then
-            local pts = (self.handler and self.handler.points) or {}
-            local VCalc = require("codee.vector_calc")
-            local com_left_cm, total_m = VCalc.centerOfMassFromLeft(self.body, pts)
-            if (total_m or 0) > 0 then
-                text = string.format("CG: %.1f cm from nose (left)", com_left_cm)
-            end
-        end
-    -- Auto-size CG HUD to content exactly with symmetric padding
-    local textW = lg.getFont():getWidth(text)
-    local padX = 6 -- horizontal content padding
-    local boxW = math.min(w - 2*margin, textW + 4 + padX*2) -- beginWindow contributes 2px each side within frame
-        local boxH = fh + 12
-        local bx = margin
-        local by = h - margin - boxH
-    local cx, cy, cw, ch = self:beginWindow("cghud", bx, by, boxW, boxH, "")
-    self:drawLabel(cx + padX, cy + 4, cw - padX*2, text)
-        self:endWindow()
-    end
+    -- CG HUD (bottom-left), UI-managed
+    require('codee.ui_elemets.sections.hud').drawCG(self)
     -- flush any queued layers (currently unused for most sections)
     self:flushLayers()
 
@@ -1056,11 +846,23 @@ end
 
 function UI:mousepressed(mx, my, button)
     if button ~= 1 then return end
+    -- Ensure hit maps exist to avoid nil-index on early clicks
+    if not self.hit then
+        self.hit = { body = {}, comp = { mass = {}, dist = {}, icon = {} }, setup = {}, settings = {}, selection = {} }
+    else
+        self.hit.comp = self.hit.comp or { mass = {}, dist = {}, icon = {} }
+        self.hit.body = self.hit.body or {}
+        self.hit.setup = self.hit.setup or {}
+        self.hit.settings = self.hit.settings or {}
+        self.hit.selection = self.hit.selection or {}
+    end
     -- No console click focus
     -- settings modal clicks
     if self.showSettings then
-        local s = self.hit.settings
-        local function inside(r) return r and mx>=r.x and mx<=r.x+r.w and my>=r.y and my<=r.y+r.h end
+    self.hit = self.hit or {}
+    self.hit.settings = self.hit.settings or {}
+    local s = self.hit.settings
+    local function inside(r) return UIE.hit.insideRect(mx, my, r) end
         -- Resolution dropdown label toggles list
         if inside(s.res) then
             self._resOpen = not self._resOpen
@@ -1125,8 +927,10 @@ function UI:mousepressed(mx, my, button)
     end
     -- If modal open, allow clicking lines to edit
     if self.showSetup then
+        self.hit = self.hit or {}
+        self.hit.setup = self.hit.setup or {}
         local s = self.hit.setup
-        local function inside(r) return r and mx>=r.x and mx<=r.x+r.w and my>=r.y and my<=r.y+r.h end
+        local function inside(r) return UIE.hit.insideRect(mx, my, r) end
         if inside(s.length) then self.setupEditField="setup.length"; self.inputText=""; return end
         if inside(s.thickness) then self.setupEditField="setup.thickness"; self.inputText=""; return end
         if inside(s.mass) then self.setupEditField="setup.mass"; self.inputText=""; return end
@@ -1145,7 +949,7 @@ function UI:mousepressed(mx, my, button)
         if self.menu.open then
             for _, item in ipairs(self.menu.items) do
                 local r = item._bounds
-                if r and mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+                if UIE.hit.insideRect(mx, my, r) then
                     if item.id == "settings" then self.showSettings = true end
                     self.menu.open = false
                     return
@@ -1156,11 +960,7 @@ function UI:mousepressed(mx, my, button)
         end
     end
     -- Click body fields to edit (disabled outside setup)
-    do
-        local b = self.hit.body
-        local function inside(r) return r and mx>=r.x and mx<=r.x+r.w and my>=r.y and my<=r.y+r.h end
-        -- no-op: must use Setup modal
-    end
+    -- Body fields are edited only via Setup modal; ignore clicks here
     -- Click rows
     local w, h = love.graphics.getDimensions()
     -- use metrics captured during draw
@@ -1188,9 +988,7 @@ function UI:mousepressed(mx, my, button)
     -- Pixel-perfect icon drag: start only if clicking inside the icon circle of selected item
     if self.selected and self.hit and self.hit.comp and self.hit.comp.icon and self.hit.comp.icon[self.selected] then
         local r = self.hit.comp.icon[self.selected]
-        local dx = mx - r.cx
-        local dy = my - r.cy
-        if dx*dx + dy*dy <= (r.r*r.r) then
+    if UIE.hit.insideCircle(mx, my, r) then
             self.draggingIndex = self.selected
             return
         end
